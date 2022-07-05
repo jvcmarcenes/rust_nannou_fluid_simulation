@@ -7,19 +7,23 @@ use nannou::{prelude::*, image::{ImageBuffer, Rgb, DynamicImage}, wgpu::Texture}
 const WIDTH: usize = 128;
 const HEIGHT: usize = 128;
 
-const DT: f32 = 0.1;
 const DIFF: f32 = 1e-6;
-const VISC: f32 = 1e-8;
+const VISC: f32 = 1e-7;
 
 const FM: f32 = 0.18;
 
 const BRUSH_RAD: isize = 8;
 const BRUSH_STRENGTH: f32 = 255.0;
 
+const SPEED: f32 = 1.0;
+
+enum RenderMode { Density, Velocity }
+
 struct Model {
 	paused: bool,
 	left_pressed: bool,
 	right_pressed: bool,
+	render_mode: RenderMode,
 	prev_mouse: Point2,
 	fluid: Fluid<WIDTH, HEIGHT>,
 }
@@ -29,8 +33,9 @@ fn setup(_app: &App) -> Model {
 		paused: false,
 		left_pressed: false,
 		right_pressed: false,
+		render_mode: RenderMode::Density,
 		prev_mouse: pt2(0.0, 0.0),
-		fluid: Fluid::new(DT, DIFF, VISC),
+		fluid: Fluid::new(DIFF, VISC),
 	}
 }
 
@@ -40,6 +45,8 @@ fn update(app: &App, model: &mut Model, event: Event) {
 			match event {
 				KeyPressed(Key::Space) => model.paused = !model.paused,
 				KeyPressed(Key::R) => *model = setup(app),
+				KeyPressed(Key::D) => model.render_mode = RenderMode::Density,
+				KeyPressed(Key::V) => model.render_mode = RenderMode::Velocity,
 				MousePressed(MouseButton::Left) => model.left_pressed = true,
 				MouseReleased(MouseButton::Left) => model.left_pressed = false,
 				MousePressed(MouseButton::Right) => model.right_pressed = true,
@@ -63,7 +70,7 @@ fn update(app: &App, model: &mut Model, event: Event) {
 				_ => {}
 			}
 		}
-		Event::Update(_) => {
+		Event::Update(update) => {
 
 			if model.left_pressed {
 				let win = app.window_rect();
@@ -82,7 +89,9 @@ fn update(app: &App, model: &mut Model, event: Event) {
 				}
 			}
 
-			if !model.paused { model.fluid.step(); }
+			if !model.paused {
+				model.fluid.step(SPEED * update.since_last.as_secs_f32());
+			}
 
 		}
 		_ => {}
@@ -92,10 +101,20 @@ fn update(app: &App, model: &mut Model, event: Event) {
 fn view(app: &App, model: &Model, frame: Frame) {
 	let draw = app.draw();
 
-	let img = ImageBuffer::from_fn(WIDTH as u32, HEIGHT as u32, |x, y| {
-		let d = model.fluid.get_density_at(x as usize, y as usize) as u8;
-		Rgb([d; 3])
-	});
+	draw.background().color(WHITE);
+
+	let img = match model.render_mode {
+		RenderMode::Density => ImageBuffer::from_fn(WIDTH as u32, HEIGHT as u32, |x, y| {
+			let d = model.fluid.get_density_at(x as usize, y as usize) as u8;
+			Rgb([255 - d; 3])
+		}),
+		RenderMode::Velocity => ImageBuffer::from_fn(WIDTH as u32, HEIGHT as u32, |x, y| {
+			let (vx, vy) = model.fluid.get_vel_at(x as usize, y as usize);
+			let vx = map_range(vx.clamp(-0.1, 0.1), -0.1, 0.1, 0, 255);
+			let vy = map_range(vy.clamp(-0.1, 0.1), -0.1, 0.1, 0, 255);
+			Rgb([vx as u8, vy as u8, 255])
+		}),
+	};
 
 	let tex = Texture::from_image(app, &DynamicImage::ImageRgb8(img));
 
@@ -108,6 +127,6 @@ fn main() {
 	nannou::app(setup)
 	.event(update)
 	.simple_window(view)
-	.size(512, 512)
+	.size(496, 496)
 	.run();
 }

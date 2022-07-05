@@ -1,7 +1,7 @@
 
 use rayon::iter::{ParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, IndexedParallelIterator, IntoParallelRefIterator};
 
-const ITER: usize = 16;
+const ITER: usize = 10;
 
 struct Map<const W: usize, const H: usize>(Vec<f32>);
 
@@ -97,8 +97,8 @@ fn advect<const W: usize, const H: usize>(b: u8, d: &mut Map<W, H>, d0: &Map<W, 
 		let t1 = y - j0 as f32;
 		
 		*cell =
-		(1.0 - s1) * ((1.0 - t1) * d0.get(i0    , j0) + t1 * d0.get(i0    , j0 + 1)) +
-		s1         * ((1.0 - t1) * d0.get(i0 + 1, j0) + t1 * d0.get(i0 + 1, j0 + 1));
+			(1.0 - s1) * ((1.0 - t1) * d0.get(i0    , j0) + t1 * d0.get(i0    , j0 + 1)) +
+			s1         * ((1.0 - t1) * d0.get(i0 + 1, j0) + t1 * d0.get(i0 + 1, j0 + 1));
 	});
 	
 	set_bnd(b, d);
@@ -122,7 +122,6 @@ fn set_bnd<const W: usize, const H: usize>(b: u8, x: &mut Map<W, H>) {
 }
 
 pub struct Fluid<const W: usize, const H: usize> {
-	dt: f32,
 	diff: f32,
 	visc: f32,
 	s: Map<W, H>,
@@ -134,9 +133,8 @@ pub struct Fluid<const W: usize, const H: usize> {
 }
 
 impl<const W: usize, const H: usize> Fluid<W, H> {
-	pub fn new(dt: f32, diff: f32, visc: f32) -> Self {
+	pub fn new(diff: f32, visc: f32) -> Self {
 		Self {
-			dt,
 			diff,
 			visc,
 			s: Map::new(),
@@ -148,18 +146,18 @@ impl<const W: usize, const H: usize> Fluid<W, H> {
 		}
 	}
 	
-	pub fn step(&mut self) {
-		diffuse(1, &mut self.vx0, &self.vx, self.visc, self.dt);
-		diffuse(2, &mut self.vy0, &self.vy, self.visc, self.dt);
+	pub fn step(&mut self, dt: f32) {
+		diffuse(1, &mut self.vx0, &self.vx, self.visc, dt);
+		diffuse(2, &mut self.vy0, &self.vy, self.visc, dt);
 		
 		project(&mut self.vx0, &mut self.vy0, &mut self.vx, &mut self.vy);
 		
-		advect(1, &mut self.vx, &self.vx0, &self.vx0, &self.vy0, self.dt);
-		advect(2, &mut self.vy, &self.vy0, &self.vx0, &self.vy0, self.dt);
+		advect(1, &mut self.vx, &self.vx0, &self.vx0, &self.vy0, dt);
+		advect(2, &mut self.vy, &self.vy0, &self.vx0, &self.vy0, dt);
 		
 		project(&mut self.vx, &mut self.vy, &mut self.vx0, &mut self.vy0);
-		diffuse(0, &mut self.s, &self.density, self.diff, self.dt);
-		advect(0, &mut self.density, &mut self.s, &self.vx, &self.vy, self.dt);
+		diffuse(0, &mut self.s, &self.density, self.diff, dt);
+		advect(0, &mut self.density, &mut self.s, &self.vx, &self.vy, dt);
 	}
 	
 	pub fn add_density(&mut self, x: usize, y: usize, amount: f32) {
@@ -181,5 +179,16 @@ impl<const W: usize, const H: usize> Fluid<W, H> {
 	#[allow(dead_code)]
 	pub fn get_vel_at(&self, x: usize, y: usize) -> (f32, f32) {
 		(self.vx.get(x, y), self.vy.get(x, y))
+	}
+
+	#[allow(dead_code)]
+	pub fn for_every_cell<F : Fn(&mut f32, (&mut f32, &mut f32)) + Sync>(&mut self, f: F) {
+		let d = &mut self.density.0;
+		let vx = &mut self.vx.0;
+		let vy = &mut self.vy.0;
+		d.par_iter_mut()
+			.zip(vx.par_iter_mut())
+			.zip(vy.par_iter_mut())
+			.for_each(|((d_cell, vx_cell), vy_cell)| f(d_cell, (vx_cell, vy_cell)));
 	}
 }
